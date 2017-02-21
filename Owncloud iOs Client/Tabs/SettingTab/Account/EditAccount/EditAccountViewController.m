@@ -26,6 +26,7 @@
 #import "UtilsFramework.h"
 #import "ManageCookiesStorageDB.h"
 #import "CheckCapabilities.h"
+#import "FilesViewController.h"
 
 
 //Initialization the notification
@@ -325,7 +326,7 @@ NSString *relaunchErrorCredentialFilesNotification = @"relaunchErrorCredentialFi
         
         [[self navigationController] popViewControllerAnimated:YES];
        
-        
+        [appDelegate.filesViewController refreshTableFromWebDav];
         [self performSelector:@selector(closeViewController) withObject:nil afterDelay:0.5];
         
     }
