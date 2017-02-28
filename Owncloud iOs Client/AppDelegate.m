@@ -156,11 +156,6 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     //Check if the server support shared api
     [self performSelector:@selector(checkIfServerSupportThings) withObject:nil afterDelay:0.0];
     
-    //Update favorites files if there are active user
-    if (_activeUser) {
-        [self performSelector:@selector(launchProcessToSyncAllFavorites) withObject:nil afterDelay:5.0];
-    }
-    
     //Needed to use on background tasks
     if (!k_is_sso_active) {
         [[UIApplication sharedApplication] setMinimumBackgroundFetchInterval:UIApplicationBackgroundFetchIntervalMinimum];
@@ -175,7 +170,6 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     }
    */
     
-    
     //Ugly solution for erase the persistent cache across launches
     
     NSInteger memory = 4; //4 MB
@@ -186,15 +180,29 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     [NSURLCache setSharedURLCache:sharedCache];
     sleep(1); //Important sleep. Very ugly but neccesarry.
     
-    DLog(@"showHelp_:%d",[ManageDB getShowHelpGuide]);
-    if (k_show_main_help_guide && [ManageDB getShowHelpGuide] && !_activeUser) {
-        self.helpGuideWindowViewController = [HelpGuideViewController new];        
-        self.window.rootViewController = self.helpGuideWindowViewController;
+    UserDto *user = [ManageUsersDB getActiveUser];
+    
+    if (user) {
+        self.activeUser = user;
+        
+        ((CheckAccessToServer*)[CheckAccessToServer sharedManager]).delegate = self;
+        [[CheckAccessToServer sharedManager] isConnectionToTheServerByUrl:user.url withTimeout:k_timeout_fast];
+        
+        //Update favorites files if there are active user
+        [self performSelector:@selector(launchProcessToSyncAllFavorites) withObject:nil afterDelay:5.0];
+        
+    } else if (k_show_main_help_guide && [ManageDB getShowHelpGuide]) {
+            self.helpGuideWindowViewController = [HelpGuideViewController new];
+            self.window.rootViewController = self.helpGuideWindowViewController;
+    } else {
+        
+        [self checkIfIsNecesaryShowPassCode];
     }
-   
+
     //Show TouchID dialog if active
-    if([ManageAppSettingsDB isTouchID])
+    if([ManageAppSettingsDB isTouchID]) {
         [[ManageTouchID sharedSingleton] showTouchIDAuth];
+    }
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [[InstantUpload instantUploadManager] activate];
@@ -669,8 +677,6 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
             return NSURLSessionAuthChallengePerformDefaultHandling;
         }];
         
-        
-        
         NSURLSessionConfiguration *networkConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
         networkConfiguration.HTTPShouldUsePipelining = YES;
         networkConfiguration.HTTPMaximumConnectionsPerHost = 1;
@@ -680,17 +686,10 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
         [networkSessionManager.operationQueue setMaxConcurrentOperationCount:1];
         networkSessionManager.responseSerializer = [AFHTTPResponseSerializer serializer];
    
-
         sharedOCCommunication = [[OCCommunication alloc] initWithUploadSessionManager:uploadSessionManager andDownloadSessionManager:downloadSessionManager andNetworkSessionManager:networkSessionManager];
         
-
-        //Acive the cookies functionality if the server supports it
-        AppDelegate *appDelegate = (AppDelegate *)[[UIApplication sharedApplication] delegate];
-        if (appDelegate.activeUser) {
-            if (appDelegate.activeUser.hasCookiesSupport == serverFunctionalitySupported) {
-                sharedOCCommunication.isCookiesAvailable = YES;
-            }
-        }
+        //Cookies is allways available in current supported Servers
+        sharedOCCommunication.isCookiesAvailable = YES;
 
 	}
 	return sharedOCCommunication;
@@ -717,14 +716,8 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
         
         sharedOCCommunicationDownloadFolder = [[OCCommunication alloc] initWithUploadSessionManager:nil andDownloadSessionManager:downloadSessionManager andNetworkSessionManager:nil];
         
-        
-        //Acive the cookies functionality if the server supports it
-        AppDelegate *appDelegate = (AppDelegate *)[[UIApplication sharedApplication] delegate];
-        if (appDelegate.activeUser) {
-            if (appDelegate.activeUser.hasCookiesSupport == serverFunctionalitySupported) {
-                sharedOCCommunicationDownloadFolder.isCookiesAvailable = YES;
-            }
-        }
+        //Cookies is allways available in current supported Servers
+        sharedOCCommunicationDownloadFolder.isCookiesAvailable = YES;
         
     }
     return sharedOCCommunicationDownloadFolder;
@@ -1005,7 +998,8 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
     // Use this method to pause ongoing tasks, disable timers, and throttle down OpenGL ES frame rates. Games should use this method to pause the game.
     //For iOS8 we need to change the checking to this method, for show as a first step the pincode screen
-    [self checkIfIsNecesaryShowPassCodeWillEnterForeground];
+    [self closeAlertViewAndViewControllers];
+    [self performSelector:@selector(checkIfIsNecesaryShowPassCodeWillResignActive) withObject:nil afterDelay:0.5];
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application
@@ -1067,7 +1061,10 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
         _activeUser=[ManageUsersDB getActiveUser];
     }
     
-    [[CheckAccessToServer sharedManager] isConnectionToTheServerByUrl:self.activeUser.url];
+    if (_activeUser.url != nil) {
+       [[CheckAccessToServer sharedManager] isConnectionToTheServerByUrl:self.activeUser.url];
+    }
+    
     
     //Check if expieration time upload is called
     if (_isExpirationTimeInUpload) {
@@ -1760,20 +1757,23 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
 #pragma mark - Pass Code
 
 - (void)checkIfIsNecesaryShowPassCode {
-    if ([ManageAppSettingsDB isPasscode]) {
+    if ([ManageAppSettingsDB isPasscode] || k_is_passcode_forced) {
         dispatch_async(dispatch_get_main_queue(), ^{
             
             KKPasscodeViewController* vc = [[KKPasscodeViewController alloc] initWithNibName:nil bundle:nil];
             vc.delegate = self;
             
             OCPortraitNavigationViewController *oc = [[OCPortraitNavigationViewController alloc]initWithRootViewController:vc];
-            vc.mode = KKPasscodeModeEnter;
             
+            if([ManageAppSettingsDB isPasscode]) {
+                vc.mode = KKPasscodeModeEnter;
+            } else {
+                vc.mode = KKPasscodeModeSet;
+            }
+
             self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
             
             UIViewController *rootController = [[UIViewController alloc]init];
-            rootController.view.backgroundColor = [UIColor darkGrayColor];
-            
             self.window.rootViewController = rootController;
             [self.window makeKeyAndVisible];
             
@@ -1793,20 +1793,33 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
   
 }
 
-- (void)checkIfIsNecesaryShowPassCodeWillEnterForeground {
+- (void)checkIfIsNecesaryShowPassCodeWillResignActive {
     
-    if ([ManageAppSettingsDB isPasscode]) {
+    if ([ManageAppSettingsDB isPasscode] || k_is_passcode_forced) {
         dispatch_async(dispatch_get_main_queue(), ^{
             
             KKPasscodeViewController* vc = [[KKPasscodeViewController alloc] initWithNibName:nil bundle:nil];
             vc.delegate = self;
             
             OCPortraitNavigationViewController *oc = [[OCPortraitNavigationViewController alloc]initWithRootViewController:vc];
-            vc.mode = KKPasscodeModeEnter;
             
+            if([ManageAppSettingsDB isPasscode]) {
+                vc.mode = KKPasscodeModeEnter;
+            } else {
+                vc.mode = KKPasscodeModeSet;
+            }
+
             if (IS_IPHONE) {
-                [self closeAlertViewAndViewControllers];
+                
+                UIViewController *topView = [self topViewController];
+                
+                if (topView) {
+                    if (![topView isKindOfClass:[KKPasscodeViewController class]]) {
+                        _currentViewVisible = topView;
+                   }
+                }
                 [_currentViewVisible presentViewController:oc animated:NO completion:nil];
+                
                 
             } else {
                 //is ipad
@@ -1823,6 +1836,7 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     }
 }
 
+
 ///-----------------------------------
 /// @name Close alertViews and ViewControllers
 ///-----------------------------------
@@ -1833,34 +1847,123 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
  */
 - (void) closeAlertViewAndViewControllers {
     
-    //Close the openWith option in FileViewController
-    if (_presentFilesViewController.openWith) {
-        [_presentFilesViewController.openWith.activityView dismissViewControllerAnimated:NO completion:nil];
-    }
-    //Close the delete option in FilesViewController
-    if (_presentFilesViewController.mDeleteFile.popupQuery) {
-        [_presentFilesViewController.mDeleteFile.popupQuery dismissWithClickedButtonIndex:0 animated:NO];
-    }
-    //Close the pop-up of twitter and facebook in SettingViewController
-    if (_settingsViewController.popupQuery) {
-        [_settingsViewController.popupQuery dismissWithClickedButtonIndex:0 animated:NO];
-    }
-    if (_settingsViewController.twitter) {
-        [_settingsViewController.twitter dismissViewControllerAnimated:NO completion:nil];
-    }
-    if (_settingsViewController.facebook) {
-        [_settingsViewController.facebook dismissViewControllerAnimated:NO completion:nil];
-    }
-    //Close the view of mail in SettingViewController
-    if (_settingsViewController.mailer) {
-        [_settingsViewController.mailer dismissViewControllerAnimated:NO completion:nil];
-    }
-    //Close the pincode view controller in SettingViewController
-    if (_settingsViewController.vc) {
-        [_settingsViewController.vc dismissViewControllerAnimated:NO completion:nil];
+    if (self.presentFilesViewController){
+        //Close the openWith option in FileViewController
+        if (self.presentFilesViewController.openWith) {
+            [self.presentFilesViewController.openWith.activityView dismissViewControllerAnimated:NO completion:nil];
+        }
+        //Close the delete option in FilesViewController
+        if (self.presentFilesViewController.mDeleteFile.popupQuery) {
+            [self.presentFilesViewController.mDeleteFile.popupQuery dismissWithClickedButtonIndex:0 animated:NO];
+        }
+        
+        //Close the more view controller on the list of FilesViewController
+        if (self.presentFilesViewController.moreActionSheet) {
+            [self.presentFilesViewController.moreActionSheet dismissWithClickedButtonIndex:self.presentFilesViewController.moreActionSheet.cancelButtonIndex animated:NO];
+        }
+        
+        //Close the plus view controller on the list of FilesViewController
+        if (self.presentFilesViewController.plusActionSheet) {
+            [self.presentFilesViewController.plusActionSheet dismissWithClickedButtonIndex:self.presentFilesViewController.plusActionSheet.cancelButtonIndex animated:NO];
+        }
+        
+        //Close the sort view controller on the list of FilesViewController
+        if (self.presentFilesViewController.sortingActionSheet) {
+            [self.presentFilesViewController.sortingActionSheet dismissWithClickedButtonIndex:self.presentFilesViewController.sortingActionSheet.cancelButtonIndex animated:NO];
+        }
+        
+        //Create folder
+        if (self.presentFilesViewController.folderView) {
+            [self.presentFilesViewController.folderView dismissWithClickedButtonIndex:self.presentFilesViewController.folderView.cancelButtonIndex animated:NO];
+        }
+        
+        //Rename folder
+        if (self.presentFilesViewController.rename.renameAlertView) {
+            [self.presentFilesViewController.rename.renameAlertView dismissWithClickedButtonIndex:self.presentFilesViewController.rename.renameAlertView.cancelButtonIndex animated:NO];
+        }
+        
     }
     
+    if (self.settingsViewController){
+        //Close the pop-up of twitter and facebook in SettingViewController
+        if (self.settingsViewController.popupQuery) {
+            [self.settingsViewController.popupQuery dismissWithClickedButtonIndex:self.settingsViewController.popupQuery.cancelButtonIndex animated:NO];
+        }
+        if (self.settingsViewController.twitter) {
+            [self.settingsViewController.twitter dismissViewControllerAnimated:NO completion:nil];
+        }
+        if (self.settingsViewController.facebook) {
+            [self.settingsViewController.facebook dismissViewControllerAnimated:NO completion:nil];
+        }
+        //Close the view of mail in SettingViewController
+        if (self.settingsViewController.mailer) {
+            [self.settingsViewController.mailer dismissViewControllerAnimated:NO completion:nil];
+        }
+        //Close the pincode view controller in SettingViewController
+        if (self.settingsViewController.vc) {
+            [self.settingsViewController.vc dismissViewControllerAnimated:NO completion:nil];
+        }
+        //Close the pincode view controller in SettingViewController
+        if (self.settingsViewController.vc) {
+            [self.settingsViewController.vc dismissViewControllerAnimated:NO completion:nil];
+        }
+        //Close user actionsheet view controller in SettingViewController
+        if (self.settingsViewController.menuAccountActionSheet) {
+            [self.settingsViewController.menuAccountActionSheet dismissWithClickedButtonIndex:self.settingsViewController.menuAccountActionSheet.cancelButtonIndex animated:NO];
+        }
+    }
 }
+
+- (UIViewController *)topViewController{
+    return [self topViewController:[UIApplication sharedApplication].keyWindow.rootViewController];
+}
+
+- (UIViewController *)topViewController:(UIViewController *)rootViewController
+{
+    if (rootViewController.presentedViewController == nil) {
+        return rootViewController;
+    }
+    
+    if ([rootViewController.presentedViewController isKindOfClass:[UINavigationController class]]) {
+        UINavigationController *navigationController = (UINavigationController *)rootViewController.presentedViewController;
+        UIViewController *lastViewController = [[navigationController viewControllers] lastObject];
+        return [self topViewController:lastViewController];
+        
+        /*
+         UIViewController *lastViewController;
+         
+         for (id current in [navigationController viewControllers]) {
+         
+         if (![current isKindOfClass:[UIAlertController class]]) {
+         lastViewController = current;
+         }
+         
+         }
+         */
+    }
+    
+    UIViewController *presentedViewController = (UIViewController *)rootViewController.presentedViewController;
+    return [self topViewController:presentedViewController];
+}
+
+//- (UIViewController*)topViewController {
+//    return [self topViewControllerWithRootViewController:[UIApplication sharedApplication].keyWindow.rootViewController];
+//}
+//
+//- (UIViewController*)topViewControllerWithRootViewController:(UIViewController*)rootViewController {
+//    if ([rootViewController isKindOfClass:[UITabBarController class]]) {
+//        UITabBarController* tabBarController = (UITabBarController*)rootViewController;
+//        return [self topViewControllerWithRootViewController:tabBarController.selectedViewController];
+//    } else if ([rootViewController isKindOfClass:[UINavigationController class]]) {
+//        UINavigationController* navigationController = (UINavigationController*)rootViewController;
+//        return [self topViewControllerWithRootViewController:navigationController.visibleViewController];
+//    } else if (rootViewController.presentedViewController) {
+//        UIViewController* presentedViewController = rootViewController.presentedViewController;
+//        return [self topViewControllerWithRootViewController:presentedViewController];
+//    } else {
+//        return rootViewController;
+//    }
+//}
 
 
 #pragma mark - Pass Code Delegate Methods
@@ -1868,20 +1971,47 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
 - (void)didPasscodeEnteredCorrectly:(KKPasscodeViewController*)viewController{
     DLog(@"Did pass code entered correctly");
     
+    [self initViewsAfterDismissPasscode];
+}
+
+- (void)didPasscodeEnteredIncorrectly:(KKPasscodeViewController*)viewController{
+    DLog(@"Did pass code entered incorrectly");
+}
+
+- (void)didSettingsChanged:(KKPasscodeViewController *)viewController {
+    DLog(@"Did pass code entered correctly after enforce passcode set");
+    [self initViewsAfterDismissPasscode];
+}
+
+- (void)initViewsAfterDismissPasscode {
+    
     if (_isFileFromOtherAppWaitting==YES) {
         if (!_filesViewController) {
             [self initAppWithEtagRequest:YES];
             
         } else {
-             [self performSelector:@selector(presentUploadFromOtherApp) withObject:nil afterDelay:0.5];
+            [self performSelector:@selector(presentUploadFromOtherApp) withObject:nil afterDelay:0.5];
         }
     } else {
         //If it's first open
         if (!_filesViewController) {
             [self initAppWithEtagRequest:YES];
             
-
         } else {
+            
+            if(_presentFilesViewController.rename.renameAlertView){
+                [_presentFilesViewController.rename.renameAlertView dismissWithClickedButtonIndex:0 animated:NO];
+            }
+            if (_presentFilesViewController.moreActionSheet){
+                [_presentFilesViewController.moreActionSheet dismissWithClickedButtonIndex:k_max_number_options_more_menu animated:NO];
+            }
+            if (_presentFilesViewController.plusActionSheet){
+                [_presentFilesViewController.plusActionSheet dismissWithClickedButtonIndex:k_max_number_options_plus_menu animated:NO];
+            }
+            if (_presentFilesViewController.sortingActionSheet) {
+                [_presentFilesViewController.sortingActionSheet dismissWithClickedButtonIndex:k_max_number_options_sort_menu animated:NO];
+            }
+            
             if (_splitViewController) {
                 [_splitViewController dismissViewControllerAnimated:NO completion:nil];
             } else {
@@ -1891,9 +2021,7 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     }
 }
 
-- (void)didPasscodeEnteredIncorrectly:(KKPasscodeViewController*)viewController{
-    DLog(@"Did pass code entered incorrectly");
-}
+
 
 #pragma mark - Items to upload from other apps
 
@@ -2885,15 +3013,6 @@ NSString * NotReachableNetworkForDownloadsNotification = @"NotReachableNetworkFo
     
     self.window.rootViewController = splashScreenView;
     [self.window makeKeyAndVisible];
-    
-    UserDto *user = [ManageUsersDB getActiveUser];
-    
-    if (user) {
-        ((CheckAccessToServer*)[CheckAccessToServer sharedManager]).delegate = self;
-        [[CheckAccessToServer sharedManager] isConnectionToTheServerByUrl:user.url withTimeout:k_timeout_fast];
-    } else {
-        [self checkIfIsNecesaryShowPassCode];
-    }
 }
 
 #pragma mark - CheckAccessToServerDelegate

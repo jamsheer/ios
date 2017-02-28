@@ -183,9 +183,9 @@
         BOOL isSamlCredentialsError = NO;
         
         //Check the login error in shibboleth
-        if (k_is_sso_active && redirectedServer) {
+        if (k_is_sso_active) {
             //Check if there are fragmens of saml in url, in this case there are a credential error
-            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:redirectedServer];
+            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:response];
         }
         if (!isSamlCredentialsError) {
             
@@ -273,9 +273,9 @@
         BOOL isSamlCredentialsError=NO;
         
         //Check the login error in shibboleth
-        if (k_is_sso_active && redirectedServer) {
+        if (k_is_sso_active) {
             //Check if there are fragmens of saml in url, in this case there are a credential error
-            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:redirectedServer];
+            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:(NSHTTPURLResponse *)response];
             if (isSamlCredentialsError) {
                 weakSelf.currentUpload.status = errorUploading;
                 weakSelf.currentUpload.kindOfError = errorCredentials;
@@ -336,9 +336,9 @@
         BOOL isSamlCredentialsError=NO;
         
         //Check the login error in shibboleth
-        if (k_is_sso_active && redirectedServer) {
+        if (k_is_sso_active) {
             //Check if there are fragmens of saml in url, in this case there are a credential error
-            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:redirectedServer];
+            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:(NSHTTPURLResponse *)response];
             if (isSamlCredentialsError) {
                 weakSelf.currentUpload.status = errorUploading;
                 weakSelf.currentUpload.kindOfError = errorCredentials;
@@ -364,6 +364,13 @@
                 }else{
                     //We set the kindOfError in case that we have a credential or if the file where we want upload not exist
                     switch (httpResponse.statusCode) {
+                            
+                        case kOCErrorServerInsufficientStorage:
+                            weakSelf.currentUpload.status = errorUploading;
+                            weakSelf.currentUpload.kindOfError = errorInsufficientStorage;
+                            [ManageUploadsDB setStatus:errorUploading andKindOfError:weakSelf.currentUpload.kindOfError byUploadOffline:weakSelf.currentUpload];
+                            [self changeTheStatusToFailForInsufficientStorage];
+                            break;
                         case kOCErrorServerUnauthorized:
                             weakSelf.currentUpload.status = errorUploading;
                             weakSelf.currentUpload.kindOfError = errorCredentials;
@@ -573,6 +580,19 @@
     
 }
 
+- (void)changeTheStatusToFailForInsufficientStorage{
+    
+    DLog(@"The Status is Fail for Insufficient storage");
+    
+    [UIApplication sharedApplication].networkActivityIndicatorVisible = NO;
+    
+    //Like credential error
+    _currentUpload.status = errorUploading;
+    _currentUpload.kindOfError = errorInsufficientStorage;
+    [ManageUploadsDB setStatus:errorUploading andKindOfError:errorInsufficientStorage byUploadOffline:self.currentUpload];
+    
+}
+
 
 - (void) changeTheStatusToWaitingToServerConnection{
     
@@ -729,9 +749,9 @@
         BOOL isSamlCredentialsError=NO;
         
         //Check the login error in shibboleth
-        if (k_is_sso_active && redirectedServer) {
+        if (k_is_sso_active) {
             //Check if there are fragmens of saml in url, in this case there are a credential error
-            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:redirectedServer];
+            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:response];
             if (isSamlCredentialsError) {
                 DLog(@"error login updating the etag");
             }
@@ -808,9 +828,9 @@
         BOOL isSamlCredentialsError=NO;
         
         //Check the login error in shibboleth
-        if (k_is_sso_active && redirectedServer) {
+        if (k_is_sso_active) {
             //Check if there are fragmens of saml in url, in this case there are a credential error
-            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:redirectedServer];
+            isSamlCredentialsError = [FileNameUtils isURLWithSamlFragment:response];
             if (isSamlCredentialsError) {
                 DLog(@"error login checking the etag");
                 [ManageUploadsDB setStatus:errorUploading andKindOfError:notAnError byUploadOffline:_currentUpload];

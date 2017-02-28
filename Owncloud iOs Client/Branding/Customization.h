@@ -15,7 +15,7 @@
 
 
 //app year
-#define k_year 2016
+#define k_year 2017
 
 //URLs Setting
 #define k_help_url @"http://owncloud.com/mobile/help"
@@ -150,3 +150,6 @@
 
 //Show share by link
 #define k_is_share_by_link_available YES
+
+//Force passcode
+#define k_is_passcode_forced NO
